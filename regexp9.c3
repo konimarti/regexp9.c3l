@@ -1,6 +1,7 @@
 module regexp9;
 
 import std::io;
+import regexp9::plan9 @public;
 
 alias Rune = Char32;
 const Rune RUNESELF = 0x80;
@@ -65,9 +66,9 @@ const usz MAXCLASS = 16;
 *>
 struct Reprog
 {
-	Reinst     *startinst;	/* start pc */
+	Reinst           *startinst;	/* start pc */
 	Reclass[MAXCLASS] class;	/* .data */
-	Reinst[5]   firstinst;	/* .text */
+	Reinst[5]         firstinst;	/* .text */
 }
 
 
@@ -303,8 +304,8 @@ fn void pushator(Recomp *rc, OpCode t)
 	{
 		cant("operator stack overflow");
 	}
-	*rc.atorp++ = t;
-	*rc.subidp++ = rc.cursubid;
+	*(rc.atorp++) = t;
+	*(rc.subidp++) = rc.cursubid;
 }
 
 fn Node* popand(Recomp *rc, int op)
@@ -335,7 +336,8 @@ fn void evaluntil(Recomp *rc, OpCode pri)
 	Node *op1; Node *op2;
 	Reinst *inst1; Reinst *inst2;
 
-	while (pri == RBRA || rc.atorp[-1] >= pri){
+	while (pri == RBRA || rc.atorp[-1] >= pri)
+	{
 		switch(popator(rc))
 		{
 		default:
@@ -400,7 +402,7 @@ fn Reprog* optimize(Recomp *rc, Reprog *pp)
 	/*
 	 *  get rid of NOOP chains
 	 */
-	for(inst = &pp.firstinst[0]; inst.type != END; inst++)
+	for (inst = &pp.firstinst[0]; inst.type != END; inst++)
 	{
 		target = inst.u2.next;
 		while(target.type == NOP)
@@ -450,12 +452,12 @@ fn void dumpstack(Recomp *rc)
 	OpCode *ip;
 
 	io::printf("operators\n");
-	for (ip = &rc.atorstack; ip < rc.atorp; ip++)
+	for (ip = &rc.atorstack[0]; ip < rc.atorp; ip++)
 	{
 		io::printf("0%o\n", *ip);
 	}
 	io::printf("operands\n");
-	for (stk = &rc.andstack; stk < rc.andp; stk++)
+	for (stk = &rc.andstack[0]; stk < rc.andp; stk++)
 	{
 		io::printf("0%o\t0%o\n", stk.first.type, stk.last.type);
 	}
@@ -498,7 +500,8 @@ fn void dump(Reprog *pp)
 		{
 			io::printf("\n");
 		}
-	} while (l++.type);
+	// TODO: Check why the != END part is necessary here; it's not used in plan9
+	} while ((l++).type != END);
 }
 
 fn Reclass* newclass(Recomp *rc)
@@ -510,19 +513,6 @@ fn Reclass* newclass(Recomp *rc)
 	return &(rc.classp[rc.nclass++]);
 }
 
-// Mock Plan9's chartorune
-fn usz chartorune(Rune* rp, char* s)
-{
-	usz size = 4;
-	if (try rune = conv::utf8_to_char32(s, &size))
-	{
-		*rp = rune;
-		return size;
-	}
-	*rp = 0;
-	return 0;
-}
-
 fn int nextc(Recomp *rc, Rune *rp)
 {
 	if (rc.lexdone)
@@ -530,10 +520,10 @@ fn int nextc(Recomp *rc, Rune *rp)
 		*rp = 0;
 		return 1;
 	}
-	rc.exprp += chartorune(rp, rc.exprp);
+	rc.exprp += plan9::chartorune(rp, rc.exprp);
 	if (*rp == '\\')
 	{
-		rc.exprp += chartorune(rp, rc.exprp);
+		rc.exprp += plan9::chartorune(rp, rc.exprp);
 		return 1;
 	}
 	if (*rp == 0)
@@ -705,14 +695,14 @@ fn OpCode bldcclass(Recomp *rc)
 	return type;
 }
 
-fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
+fn Reprog*? regcomp1(ZString s, int literal, OpCode dot_type)
 {
 	OpCode token;
 	Reprog *pp;
 	Recomp rc;
 
 	/* get memory for the program */
-	pp = mem::malloc(Reprog.sizeof + 6 * Reinst.sizeof * s.len);
+	pp = mem::malloc(Reprog.sizeof + 6 * Reinst.sizeof * s.len());
 	if (pp == null){
 		return REG_OUT_OF_MEMORY?;
 	}
@@ -728,7 +718,7 @@ fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
 
 	/* compile it */
 	rc.lexdone = 0;
-	rc.exprp = s.ptr;
+	rc.exprp = s;
 	rc.nclass = 0;
 	rc.nbra = 0;
 	rc.atorp = &rc.atorstack[0];
@@ -738,10 +728,10 @@ fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
 	rc.cursubid = 0;
 
 	/* Start with a low priority operator to prime parser */
-	pushator(&rc, OpCode.START-1);
+	pushator(&rc, OpCode.START - 1);
 	while((token = lex(&rc, literal, dot_type)) != END)
 	{
-		if (((int)token&0300) == (int)OpCode.OPERATOR)
+		if ((((char)token)&0o300) == (char)OpCode.OPERATOR)
 		{
 			operator(&rc, token);
 		}
@@ -758,8 +748,9 @@ fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
 	operand(&rc, END);
 	evaluntil(&rc, START);
 
-	// TODO: only for debug
+	$if $feature(DEBUG):
 	dumpstack(&rc);
+	$endif
 
 	if(rc.nbra)
 	{
@@ -768,14 +759,16 @@ fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
 	--rc.andp;	/* points to first and only operand */
 	pp.startinst = rc.andp.first;
 
-	// TODO: only for debug
+	$if $feature(DEBUG):
 	dump(pp);
+	$endif
 
 	pp = optimize(&rc, pp);
 
-	// TODO: only for debug
+	$if $feature(DEBUG):
 	io::printf("start: %d\n", rc.andp.first - &pp.firstinst[0]);
 	dump(pp);
+	$endif
 
 	return pp;
 }
@@ -784,17 +777,17 @@ fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
 // Public API
 //
 
-fn Reprog*? regcomp(String s)
+fn Reprog*? regcomp(ZString s)
 {
 	return regcomp1(s, 0, ANY);
 }
 
-fn Reprog*? regcomplit(String s)
+fn Reprog*? regcomplit(ZString s)
 {
 	return regcomp1(s, 1, ANY);
 }
 
-fn Reprog*? regcompnl(String s)
+fn Reprog*? regcompnl(ZString s)
 {
 	return regcomp1(s, 0, ANYNL);
 }
@@ -966,7 +959,7 @@ fn int regexec1(
 	Relist *tlp;
 	char *s;
 	int i;
-	OpCode checkstart;
+	bool checkstart;
 	Rune r; Rune *rp; Rune *ep;
 	int n;
 	Relist* tl;		/* This list, next list */
@@ -977,7 +970,7 @@ fn int regexec1(
 	char *p;
 
 	match = 0;
-	checkstart = j.starttype;
+	checkstart = j.starttype > 0;
 	if (mp)
 	{
 		for (i = 0; i < ms; i++)
@@ -998,7 +991,7 @@ fn int regexec1(
 			switch (j.starttype)
 			{
 			case RUNE:
-				p = utfrune(s, j.startchar);
+				p = plan9::utfrune(s, j.startchar);
 				if (p == null || s == j.eol)
 				{
 					return match;
@@ -1006,7 +999,7 @@ fn int regexec1(
 				s = p;
 			case BOL:
 				if (s == bol) break;
-				p = utfrune(s, '\n');
+				p = plan9::utfrune(s, '\n');
 				if (p == null || s == j.eol)
 				{
 					return match;
@@ -1014,14 +1007,14 @@ fn int regexec1(
 				s = p+1;
 			}
 		}
-		r = *(Rune*)s;
+		r = (Rune)*s;
 		if (r < RUNESELF)
 		{
 			n = 1;
 		}
 		else
 		{
-			n = (int)chartorune(&r, s);
+			n = (int)plan9::chartorune(&r, s);
 		}
 
 		/* switch run lists */
@@ -1134,12 +1127,7 @@ fn int regexec1(
 			break;
 		}
 
-		// TODO: Check if next statement is correctly ported:
-		// checkstart = j.starttype && nl.inst==null;
-		if (j.starttype && nl.inst != null)
-		{
-			checkstart = 0;
-		}
+		checkstart = j.starttype && nl.inst==null;
 
 		s += n;
 	} while(r);
@@ -1228,24 +1216,111 @@ fn int regexec(
 	return -1;
 }
 
-import libc;
+//
+// regsub.c
+//
+
 <*
- Ported from Plan9
+ Substitute into one string using the matches from the last regexec()
 *>
+fn void regsub(
+	char *sp,	/* source string */
+	char *dp,	/* destination string */
+	int dlen,
+	Resub *mp,	/* subexpression elements */
+	int ms,   	/* number of elements pointed to by mp */
+)
+{
+	char *ssp; char *ep;
+	int i;
+
+	ep = dp + dlen - 1;
+	while (*sp != '\0'){
+		if (*sp == '\\'){
+			switch(*++sp)
+			{
+			case '0':
+			case '1':
+			case '2':
+			case '3':
+			case '4':
+			case '5':
+			case '6':
+			case '7':
+			case '8':
+			case '9':
+				i = *sp - '0';
+				if (mp != null && mp[i].s.sp != null && ms > i)
+				{
+					for(ssp = mp[i].s.sp; ssp < mp[i].e.ep; ssp++)
+					{
+						if (dp < ep)
+						{
+							*dp++ = *ssp;
+						}
+					}
+				}
+			case '\\':
+				if (dp < ep)
+				{
+					*dp++ = '\\';
+				}
+			case '\0':
+				sp--;
+			default:
+				if(dp < ep)
+				{
+					*dp++ = *sp;
+				}
+			}
+		}
+		else if (*sp == '&')
+		{
+			if (mp != null && mp[0].s.sp != null && ms > 0)
+			{
+				for(ssp = mp[0].s.sp; ssp < mp[0].e.ep; ssp++)
+				{
+					if(dp < ep)
+					{
+						*dp++ = *ssp;
+					}
+				}
+			}
+		}
+		else
+		{
+			if(dp < ep)
+			{
+				*dp++ = *sp;
+			}
+		}
+		sp++;
+	}
+	*dp = '\0';
+}
+
+
+<*
+ Utility functions ported from Plan9
+*>
+module regexp9::plan9 @private;
+
+import libc;
+
 fn char* utfrune(char *s, long c)
 {
 	long c1;
 	Rune r;
 	usz n;
 
-	if(c < RUNESYNC)		/* not part of utf sequence */
+	if(c < regexp9::RUNESYNC)		/* not part of utf sequence */
 	{
 		return libc::strchr(s, (CInt)c);
 	}
 
 	for(;;) {
-		c1 = *(Rune*)s;
-		if(c1 < RUNESELF) {	/* one byte rune */
+		c1 = *(char*)s;
+		if(c1 < regexp9::RUNESELF) {	/* one byte rune */
 			if(c1 == 0) return null;
 			if(c1 == c) return s;
 			s++;
@@ -1256,3 +1331,16 @@ fn char* utfrune(char *s, long c)
 		s += n;
 	}
 }
+
+fn usz chartorune(Rune* rp, char* s)
+{
+	usz size = 4;
+	if (try rune = conv::utf8_to_char32(s, &size) && *s)
+	{
+		*rp = rune;
+		return size;
+	}
+	*rp = 0;
+	return 0;
+}
+
