@@ -25,9 +25,14 @@ TestCase[] tests = {
 
 fn void regexp9_test()
 {
+	Resub[10] rs;
 	foreach (&tp : tests)
 	{
 		tp.p = regexp9::regcomp(tp.re)!!;
+
+		mem::set(&rs[0], 0, $sizeof(rs));
+		assert(regexp9::regexec(tp.p, "", &rs[0], 10) != -1, "regexec failed");
+
 		mem::free(tp.p);
 	}
 }

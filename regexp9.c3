@@ -3,6 +3,8 @@ module regexp9;
 import std::io;
 
 alias Rune = Char32;
+const Rune RUNESELF = 0x80;
+const Rune RUNESYNC = 0x80;
 
 faultdef REG_OUT_OF_MEMORY, REG_UNMATCHED_LEFT_PAREN;
 
@@ -47,7 +49,7 @@ struct Reinst
 	{
 		Reclass *cp;		/* class pointer */
 		Rune     r;		/* character */
-		OpCode   subid;		/* sub-expression id for RBRA and LBRA */
+		int      subid;		/* sub-expression id for RBRA and LBRA */
 		Reinst  *right;		/* right child of OR */
 	}
 	union   u2			/* regexp relies on these two being in the same union */
@@ -141,7 +143,7 @@ struct	Reljunk
 {
 	Relist*[2] relist;
 	Relist*[2] reliste;
-	int        starttype;
+	OpCode     starttype;
 	Rune       startchar;
 	char*      starts;
 	char*      eol;
@@ -175,9 +177,9 @@ struct Recomp
 	Node          *andp;
 	OpCode[NSTACK] atorstack;
 	OpCode        *atorp;
-	OpCode         cursubid;	/* id of current subexpression */
-	OpCode[NSTACK] subidstack;	/* parallel to atorstack */
-	OpCode*        subidp;
+	int            cursubid;	/* id of current subexpression */
+	int[NSTACK]    subidstack;	/* parallel to atorstack */
+	int*           subidp;
 	bool           lastwasand;	/* Last token was operand */
 	int            nbra;
 	char*          exprp;		/* pointer to next character in source expression */
@@ -797,4 +799,460 @@ fn Reprog*? regcompnl(String s)
 	return regcomp1(s, 0, ANYNL);
 }
 
+//
+// regaux.c
+//
 
+
+<*
+ Save a new match in mp
+*>
+fn void _renewmatch(Resub *mp, int ms, Resublist *sp)
+{
+	int i;
+
+	if(mp == null || ms <= 0)
+	{
+		return;
+	}
+	if(mp[0].s.sp == null || sp.m[0].s.sp<mp[0].s.sp ||
+	   (sp.m[0].s.sp==mp[0].s.sp && sp.m[0].e.ep>mp[0].e.ep))
+	   {
+		for (i = 0; i < ms && i < NSUBEXP; i++)
+		{
+			mp[i] = sp.m[i];
+		}
+		for (; i < ms; i++)
+		{
+			mp[i].s.sp = mp[i].e.ep = null;
+		}
+	}
+}
+
+<*
+ Note optimization in _renewthread:
+ 	*lp must be pending when _renewthread called; if *l has been looked
+		at already, the optimization is a bug.
+*>
+fn Relist* _renewthread(
+	Relist *lp,	/* _relist to add to */
+	Reinst *ip,		/* instruction to add */
+	int ms,
+	Resublist *sep)		/* pointers to subexpressions */
+{
+	Relist *p;
+
+	for (p=lp; p.inst; p++)
+	{
+		if (p.inst == ip)
+		{
+			if (sep.m[0].s.sp < p.se.m[0].s.sp)
+			{
+				if(ms > 1)
+				{
+					p.se = *sep;
+				}
+				else
+				{
+					p.se.m[0] = sep.m[0];
+				}
+			}
+			return null;
+		}
+	}
+	p.inst = ip;
+	if(ms > 1)
+	{
+		p.se = *sep;
+	}
+	else
+	{
+		p.se.m[0] = sep.m[0];
+	}
+	(++p).inst = null;
+	return p;
+}
+
+<*
+ Same as renewthread, but called with
+ initial empty start pointer.
+*>
+fn Relist* _renewemptythread(
+	Relist *lp,	/* _relist to add to */
+	Reinst *ip,	/* instruction to add */
+	int ms,
+	char *sp,    	/* pointers to subexpressions */
+)
+{
+	Relist *p;
+
+	for (p  =lp; p.inst; p++)
+	{
+		if (p.inst == ip)
+		{
+			if (sp < p.se.m[0].s.sp) {
+				if(ms > 1)
+				{
+					mem::set(&p.se, 0, $sizeof(p.se));
+				}
+				p.se.m[0].s.sp = sp;
+			}
+			return null;
+		}
+	}
+	p.inst = ip;
+	if(ms > 1)
+	{
+		mem::set(&p.se, 0, $sizeof(p.se));
+	}
+	p.se.m[0].s.sp = sp;
+	(++p).inst = null;
+	return p;
+}
+
+fn Relist* _rrenewemptythread(
+	Relist *lp,	/* _relist to add to */
+	Reinst *ip,	/* instruction to add */
+	int ms,
+	Rune *rsp,	/* pointers to subexpressions */
+)
+{
+	Relist *p;
+
+	for (p = lp; p.inst; p++)
+	{
+		if (p.inst == ip)
+		{
+			if (rsp < p.se.m[0].s.rsp)
+			{
+				if(ms > 1)
+				{
+					mem::set(&p.se, 0, $sizeof(p.se));
+				}
+				p.se.m[0].s.rsp = rsp;
+			}
+			return null;
+		}
+	}
+	p.inst = ip;
+	if(ms > 1)
+	{
+		mem::set(&p.se, 0, $sizeof(p.se));
+	}
+	p.se.m[0].s.rsp = rsp;
+	(++p).inst = null;
+	return p;
+}
+
+//
+// regexec.c
+//
+
+<*
+  return	0 if no match
+		>0 if a match
+		<0 if we ran out of _relist space
+*>
+fn int regexec1(
+	Reprog *progp,	/* program to run */
+	char *bol,	/* string to run machine on */
+	Resub *mp,	/* subexpression elements */
+	int ms,		/* number of elements at mp */
+	Reljunk *j
+)
+{
+	int flag = 0;
+	Reinst *inst;
+	Relist *tlp;
+	char *s;
+	int i;
+	OpCode checkstart;
+	Rune r; Rune *rp; Rune *ep;
+	int n;
+	Relist* tl;		/* This list, next list */
+	Relist* nl;
+	Relist* tle;		/* ends of this and next list */
+	Relist* nle;
+	int match;
+	char *p;
+
+	match = 0;
+	checkstart = j.starttype;
+	if (mp)
+	{
+		for (i = 0; i < ms; i++)
+		{
+			mp[i].s.sp = null;
+			mp[i].e.ep = null;
+		}
+	}
+	j.relist[0][0].inst = null;
+	j.relist[1][0].inst = null;
+
+	/* Execute machine once for each character, including terminal NUL */
+	s = j.starts;
+	do {
+		/* fast check for first char */
+		if (checkstart)
+		{
+			switch (j.starttype)
+			{
+			case RUNE:
+				p = utfrune(s, j.startchar);
+				if (p == null || s == j.eol)
+				{
+					return match;
+				}
+				s = p;
+			case BOL:
+				if (s == bol) break;
+				p = utfrune(s, '\n');
+				if (p == null || s == j.eol)
+				{
+					return match;
+				}
+				s = p+1;
+			}
+		}
+		r = *(Rune*)s;
+		if (r < RUNESELF)
+		{
+			n = 1;
+		}
+		else
+		{
+			n = (int)chartorune(&r, s);
+		}
+
+		/* switch run lists */
+		tl = j.relist[flag];
+		tle = j.reliste[flag];
+		nl = j.relist[flag^=1];
+		nle = j.reliste[flag];
+		nl.inst = null;
+
+		/* Add first instruction to current list */
+		if(match == 0)
+		{
+			_renewemptythread(tl, progp.startinst, ms, s);
+		}
+
+		/* Execute machine until current list is empty */
+		for (tlp = tl; tlp.inst; tlp++)
+		{
+			for (inst = tlp.inst; ; inst = inst.u2.next)
+			{
+				switch(inst.type)
+				{
+				case RUNE:	/* regular character */
+					if (inst.u1.r == r)
+					{
+						if (_renewthread(nl, inst.u2.next, ms, &tlp.se) == nle)
+						{
+							return -1;
+						}
+					}
+				case LBRA:
+					tlp.se.m[inst.u1.subid].s.sp = s;
+					continue;
+				case RBRA:
+					tlp.se.m[inst.u1.subid].e.ep = s;
+					continue;
+				case ANY:
+					if(r != '\n')
+					{
+						if(_renewthread(nl, inst.u2.next, ms, &tlp.se) == nle)
+						{
+							return -1;
+						}
+					}
+				case ANYNL:
+					if (_renewthread(nl, inst.u2.next, ms, &tlp.se) == nle)
+					{
+							return -1;
+					}
+				case BOL:
+					if (s == bol || *(s-1) == '\n')
+					{
+						continue;
+					}
+				case EOL:
+					if (s == j.eol || r == 0 || r == '\n')
+					{
+						continue;
+					}
+				case CCLASS:
+					ep = inst.u1.cp.end;
+					for (rp = &inst.u1.cp.spans[0]; rp < ep; rp += 2)
+					{
+						if (r >= rp[0] && r <= rp[1])
+						{
+							if (_renewthread(nl, inst.u2.next, ms, &tlp.se) == nle)
+							{
+								return -1;
+							}
+						}
+					}
+				case NCCLASS:
+					ep = inst.u1.cp.end;
+					for (rp = &inst.u1.cp.spans[0]; rp < ep; rp += 2)
+					{
+						if (r >= rp[0] && r <= rp[1])
+						{
+							break;
+						}
+					}
+					if (rp == ep)
+					{
+						if (_renewthread(nl, inst.u2.next, ms, &tlp.se) == nle)
+						{
+							return -1;
+						}
+					}
+				case OR:
+					/* evaluate right choice later */
+					if (_renewthread(tlp, inst.u1.right, ms, &tlp.se) == tle)
+					{
+						return -1;
+					}
+					/* efficiency: advance and re-evaluate */
+					continue;
+				case END:	/* Match! */
+					match = 1;
+					tlp.se.m[0].e.ep = s;
+					if (mp != null)
+					{
+						_renewmatch(mp, ms, &tlp.se);
+					}
+				}
+				break;
+			}
+		}
+
+		if(s == j.eol)
+		{
+			break;
+		}
+
+		// TODO: Check if next statement is correctly ported:
+		// checkstart = j.starttype && nl.inst==null;
+		if (j.starttype && nl.inst != null)
+		{
+			checkstart = 0;
+		}
+
+		s += n;
+	} while(r);
+	return match;
+}
+
+fn int regexec2(
+	Reprog *progp,	/* program to run */
+	char *bol,	/* string to run machine on */
+	Resub *mp,	/* subexpression elements */
+	int ms,		/* number of elements at mp */
+	Reljunk *j
+)
+{
+	int rv;
+	Relist *relist0; Relist *relist1;
+
+	/* mark space */
+	relist0 = mem::malloc(BIGLISTSIZE * Relist.sizeof);
+	if (relist0 == null)
+	{
+		return -1;
+	}
+	relist1 = mem::malloc(BIGLISTSIZE * Relist.sizeof);
+	if (relist1 == null)
+	{
+		free(relist0);
+		return -1;
+	}
+	j.relist[0] = relist0;
+	j.relist[1] = relist1;
+	j.reliste[0] = relist0 + BIGLISTSIZE - 2;
+	j.reliste[1] = relist1 + BIGLISTSIZE - 2;
+
+	rv = regexec1(progp, bol, mp, ms, j);
+	mem::free(relist0);
+	mem::free(relist1);
+	return rv;
+}
+
+fn int regexec(
+	Reprog *progp,	/* program to run */
+	char *bol,	/* string to run machine on */
+	Resub *mp,	/* subexpression elements */
+	int ms,		/* number of elements at mp */
+)
+{
+	Reljunk j;
+	Relist[LISTSIZE] relist0; Relist[LISTSIZE] relist1;
+	int rv;
+
+	/*
+ 	 *  use user-specified starting/ending location if specified
+	 */
+	j.starts = bol;
+	j.eol = null;
+	if (mp && ms > 0)
+	{
+		if (mp.s.sp) j.starts = mp.s.sp;
+		if (mp.e.ep) j.eol = mp.e.ep;
+	}
+	j.starttype = 0;
+	j.startchar = 0;
+	if (progp.startinst.type == RUNE && progp.startinst.u1.r < RUNESELF)
+	{
+		j.starttype = RUNE;
+		j.startchar = progp.startinst.u1.r;
+	}
+	if (progp.startinst.type == BOL)
+	{
+		j.starttype = BOL;
+	}
+
+	/* mark space */
+	j.relist[0] = &relist0[0];
+	j.relist[1] = &relist1[0];
+	j.reliste[0] = &relist0[0] + nelem(relist0) - 2;
+	j.reliste[1] = &relist1[0] + nelem(relist1) - 2;
+
+	rv = regexec1(progp, bol, mp, ms, &j);
+	if(rv >= 0) return rv;
+
+	rv = regexec2(progp, bol, mp, ms, &j);
+	if(rv >= 0) return rv;
+
+	return -1;
+}
+
+import libc;
+<*
+ Ported from Plan9
+*>
+fn char* utfrune(char *s, long c)
+{
+	long c1;
+	Rune r;
+	usz n;
+
+	if(c < RUNESYNC)		/* not part of utf sequence */
+	{
+		return libc::strchr(s, (CInt)c);
+	}
+
+	for(;;) {
+		c1 = *(Rune*)s;
+		if(c1 < RUNESELF) {	/* one byte rune */
+			if(c1 == 0) return null;
+			if(c1 == c) return s;
+			s++;
+			continue;
+		}
+		n = chartorune(&r, s);
+		if(r == c) return s;
+		s += n;
+	}
+}
