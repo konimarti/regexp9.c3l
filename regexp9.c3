@@ -33,7 +33,7 @@ struct Resub
 *>
 struct Reclass
 {
-	Rune	*end;
+	Rune         *end;
 	Rune[NCCRUNE] spans;
 }
 
@@ -45,10 +45,10 @@ struct Reinst
 	OpCode	type;
 	union	u1
 	{
-		Reclass	*cp;		/* class pointer */
-		Rune	r;		/* character */
-		OpCode	subid;		/* sub-expression id for RBRA and LBRA */
-		Reinst	*right;		/* right child of OR */
+		Reclass *cp;		/* class pointer */
+		Rune     r;		/* character */
+		OpCode   subid;		/* sub-expression id for RBRA and LBRA */
+		Reinst  *right;		/* right child of OR */
 	}
 	union   u2			/* regexp relies on these two being in the same union */
 	{
@@ -57,13 +57,14 @@ struct Reinst
 	}
 }
 
+const usz MAXCLASS = 16;
 <*
  Reprogram definition
 *>
 struct Reprog
 {
-	Reinst	   *startinst;	/* start pc */
-	Reclass[16] class;	/* .data */
+	Reinst     *startinst;	/* start pc */
+	Reclass[MAXCLASS] class;	/* .data */
 	Reinst[5]   firstinst;	/* .text */
 }
 
@@ -73,9 +74,9 @@ struct Reprog
 //
 const usz NSUBEXP = 32;
 
-struct	Resublist
+struct Resublist
 {
-	Resub[NSUBEXP]	m;
+	Resub[NSUBEXP] m;
 }
 
 <*
@@ -131,21 +132,21 @@ const usz BIGLISTSIZE = (25*LISTSIZE);
 struct Relist
 {
 	<* Reinstruction of the thread *>
-	Reinst*		inst;
+	Reinst*   inst;
 	<* matched subexpressions in this thread *>
-	Resublist	se;
+	Resublist se;
 }
 
 struct	Reljunk
 {
 	Relist*[2] relist;
 	Relist*[2] reliste;
-	int	starttype;
-	Rune	startchar;
-	char	*starts;
-	char	*eol;
-	Rune	*rstarts;
-	Rune	*reol;
+	int        starttype;
+	Rune       startchar;
+	char*      starts;
+	char*      eol;
+	Rune*      rstarts;
+	Rune*      reol;
 }
 
 //
@@ -158,8 +159,8 @@ struct	Reljunk
 *>
 struct Node
 {
-	Reinst*	first;
-	Reinst*	last;
+	Reinst* first;
+	Reinst* last;
 }
 
 <* max rune ranges per character class is nelem(classp->spans)/2 *>
@@ -167,93 +168,96 @@ struct Node
 // #define NCCRUNE	nelem(classp->spans)
 
 const usz NSTACK = 20;
-Node[NSTACK]	andstack;
-Node	*andp;
-OpCode[NSTACK]	atorstack;
-OpCode*	atorp;
-OpCode	cursubid;		/* id of current subexpression */
-OpCode[NSTACK]	subidstack;	/* parallel to atorstack */
-OpCode*	subidp;
-bool	lastwasand;	/* Last token was operand */
-int	nbra;
-char*	exprp;		/* pointer to next character in source expression */
-int	lexdone;
-int	nclass;
-Reclass* classp;
-Reinst*	freep;
-int	errors;
-Rune	yyrune;		/* last lex'd rune */
-Reclass* yyclassp;	/* last lex'd class */
 
-// static jmp_buf regkaboom;
-
-fn void rcerror(char *s)
+struct Recomp
 {
-	errors++;
+	Node[NSTACK]   andstack;
+	Node          *andp;
+	OpCode[NSTACK] atorstack;
+	OpCode        *atorp;
+	OpCode         cursubid;	/* id of current subexpression */
+	OpCode[NSTACK] subidstack;	/* parallel to atorstack */
+	OpCode*        subidp;
+	bool           lastwasand;	/* Last token was operand */
+	int            nbra;
+	char*          exprp;		/* pointer to next character in source expression */
+	int            lexdone;
+	int            nclass;
+	Reclass*       classp;
+	Reinst*        freep;
+	int            errors;
+	Rune           yyrune;		/* last lex'd rune */
+	Reclass*       yyclassp;	/* last lex'd class */
+}
+
+fn void rcerror(Recomp *rc, char *s)
+{
+	rc.errors++;
+	// FIXME: Improve error handling
 	// regerror(s);
 	// longjmp(regkaboom, 1);
 }
 
-fn Reinst* newinst(OpCode t)
+fn Reinst* newinst(Recomp *rc, OpCode t)
 {
-	freep.type = t;
-	freep.u2.left = null;
-	freep.u1.right = null;
-	return freep++;
+	rc.freep.type = t;
+	rc.freep.u2.left = null;
+	rc.freep.u1.right = null;
+	return rc.freep++;
 }
 
-fn void operand(OpCode t)
+fn void operand(Recomp *rc, OpCode t)
 {
 	Reinst *i;
 
-	if (lastwasand)
+	if (rc.lastwasand)
 	{
-		operator(CAT);	/* catenate is implicit */
+		operator(rc, CAT);	/* catenate is implicit */
 	}
-	i = newinst(t);
+	i = newinst(rc, t);
 
 	if (t == CCLASS || t == NCCLASS)
 	{
-		i.u1.cp = yyclassp;
+		i.u1.cp = rc.yyclassp;
 	}
 	if (t == RUNE)
 	{
-		i.u1.r = yyrune;
+		i.u1.r = rc.yyrune;
 	}
 
-	pushand(i, i);
-	lastwasand = true;
+	pushand(rc, i, i);
+	rc.lastwasand = true;
 }
 
-fn void operator(OpCode t)
+fn void operator(Recomp *rc, OpCode t)
 {
-	if (t == RBRA && --nbra<0)
+	if (t == RBRA && --rc.nbra<0)
 	{
-		rcerror("unmatched right paren");
+		rcerror(rc, "unmatched right paren");
 	}
 	if (t == LBRA){
-		if (++cursubid >= NSUBEXP)
+		if (++rc.cursubid >= NSUBEXP)
 		{
-			rcerror ("too many subexpressions");
+			rcerror (rc, "too many subexpressions");
 		}
-		nbra++;
-		if (lastwasand)
+		rc.nbra++;
+		if (rc.lastwasand)
 		{
-			operator(CAT);
+			operator(rc, CAT);
 		}
 	}
 	else
 	{
-		evaluntil(t);
+		evaluntil(rc, t);
 	}
 	if (t != RBRA)
 	{
-		pushator(t);
+		pushator(rc, t);
 	}
-	lastwasand = false;
+	rc.lastwasand = false;
 	if (t == STAR || t == QUEST || t == PLUS || t == RBRA)
 	{
-		lastwasand = true;	/* these look like operands */
+		rc.lastwasand = true;	/* these look like operands */
 	}
 }
 
@@ -280,116 +284,116 @@ fn void cant(char *s)
 	// rcerror(buf);
 }
 
-fn void pushand(Reinst *f, Reinst *l)
+fn void pushand(Recomp *rc, Reinst *f, Reinst *l)
 {
-	if(andp > &andstack[NSTACK-1])
+	if(rc.andp > &rc.andstack[NSTACK-1])
 	{
 		cant("operand stack overflow");
 	}
-	andp.first = f;
-	andp.last = l;
-	andp++;
+	rc.andp.first = f;
+	rc.andp.last = l;
+	rc.andp++;
 }
 
-fn void pushator(OpCode t)
+fn void pushator(Recomp *rc, OpCode t)
 {
-	if(atorp > &atorstack[NSTACK-1])
+	if(rc.atorp > &rc.atorstack[NSTACK-1])
 	{
 		cant("operator stack overflow");
 	}
-	*atorp++ = t;
-	*subidp++ = cursubid;
+	*rc.atorp++ = t;
+	*rc.subidp++ = rc.cursubid;
 }
 
-fn Node* popand(int op)
+fn Node* popand(Recomp *rc, int op)
 {
 	Reinst *inst;
 
-	if(andp <= &andstack[0])
+	if(rc.andp <= &rc.andstack[0])
 	{
 		regerr2("missing operand for ", op);
-		inst = newinst(NOP);
-		pushand(inst,inst);
+		inst = newinst(rc, NOP);
+		pushand(rc, inst, inst);
 	}
-	return --andp;
+	return --rc.andp;
 }
 
-fn OpCode popator()
+fn OpCode popator(Recomp *rc)
 {
-	if(atorp <= &atorstack[0])
+	if(rc.atorp <= &rc.atorstack[0])
 	{
 		cant("operator stack underflow");
 	}
-	--subidp;
-	return *--atorp;
+	--rc.subidp;
+	return *--rc.atorp;
 }
 
-fn void evaluntil(OpCode pri)
+fn void evaluntil(Recomp *rc, OpCode pri)
 {
 	Node *op1; Node *op2;
 	Reinst *inst1; Reinst *inst2;
 
-	while (pri == RBRA || atorp[-1] >= pri){
-		switch(popator())
+	while (pri == RBRA || rc.atorp[-1] >= pri){
+		switch(popator(rc))
 		{
 		default:
-			rcerror("unknown operator in evaluntil");
+			rcerror(rc, "unknown operator in evaluntil");
 		case LBRA:		/* must have been RBRA */
-			op1 = popand('(');
-			inst2 = newinst(RBRA);
-			inst2.u1.subid = *subidp;
+			op1 = popand(rc, '(');
+			inst2 = newinst(rc, RBRA);
+			inst2.u1.subid = *rc.subidp;
 			op1.last.u2.next = inst2;
-			inst1 = newinst(LBRA);
-			inst1.u1.subid = *subidp;
+			inst1 = newinst(rc, LBRA);
+			inst1.u1.subid = *rc.subidp;
 			inst1.u2.next = op1.first;
-			pushand(inst1, inst2);
+			pushand(rc, inst1, inst2);
 			return;
 		case OR:
-			op2 = popand('|');
-			op1 = popand('|');
-			inst2 = newinst(NOP);
+			op2 = popand(rc, '|');
+			op1 = popand(rc, '|');
+			inst2 = newinst(rc, NOP);
 			op2.last.u2.next = inst2;
 			op1.last.u2.next = inst2;
-			inst1 = newinst(OR);
+			inst1 = newinst(rc, OR);
 			inst1.u1.right = op1.first;
 			inst1.u2.left = op2.first;
-			pushand(inst1, inst2);
+			pushand(rc, inst1, inst2);
 		case CAT:
-			op2 = popand(0);
-			op1 = popand(0);
+			op2 = popand(rc, 0);
+			op1 = popand(rc, 0);
 			op1.last.u2.next = op2.first;
-			pushand(op1.first, op2.last);
+			pushand(rc, op1.first, op2.last);
 		case STAR:
-			op2 = popand('*');
-			inst1 = newinst(OR);
+			op2 = popand(rc, '*');
+			inst1 = newinst(rc, OR);
 			op2.last.u2.next = inst1;
 			inst1.u1.right = op2.first;
-			pushand(inst1, inst1);
+			pushand(rc, inst1, inst1);
 		case PLUS:
-			op2 = popand('+');
-			inst1 = newinst(OR);
+			op2 = popand(rc, '+');
+			inst1 = newinst(rc, OR);
 			op2.last.u2.next = inst1;
 			inst1.u1.right = op2.first;
-			pushand(op2.first, inst1);
+			pushand(rc, op2.first, inst1);
 		case QUEST:
-			op2 = popand('?');
-			inst1 = newinst(OR);
-			inst2 = newinst(NOP);
+			op2 = popand(rc, '?');
+			inst1 = newinst(rc, OR);
+			inst2 = newinst(rc, NOP);
 			inst1.u2.left = inst2;
 			inst1.u1.right = op2.first;
 			op2.last.u2.next = inst2;
-			pushand(inst1, inst2);
+			pushand(rc, inst1, inst2);
 		}
 	}
 }
 
-fn Reprog* optimize(Reprog *pp)
+fn Reprog* optimize(Recomp *rc, Reprog *pp)
 {
 	Reinst *inst; Reinst *target;
 	int size;
 	Reprog *npp;
 	Reclass *cl;
-	iptr diff;
+	isz diff;
 
 	/*
 	 *  get rid of NOOP chains
@@ -409,15 +413,15 @@ fn Reprog* optimize(Reprog *pp)
 	 *  necessary.  Reallocate to the actual space used
 	 *  and then relocate the code.
 	 */
-	size = (int)Reprog.sizeof + (int)(freep - &pp.firstinst[0]) * (int)Reinst.sizeof;
+	size = (int)Reprog.sizeof + (int)(rc.freep - &pp.firstinst[0]) * (int)Reinst.sizeof;
 	npp = mem::realloc(pp, size);
 	if(npp == null || npp == pp)
 	{
 		return pp;
 	}
 	diff = (char *)npp - (char *)pp;
-	freep = (Reinst *)((char *)freep + diff);
-	for (inst = &npp.firstinst[0]; inst < freep; inst++)
+	rc.freep = (Reinst *)((char *)rc.freep + diff);
+	for (inst = &npp.firstinst[0]; inst < rc.freep; inst++)
 	{
 		switch(inst.type)
 		{
@@ -438,18 +442,18 @@ fn Reprog* optimize(Reprog *pp)
 	return npp;
 }
 
-fn void dumpstack()
+fn void dumpstack(Recomp *rc)
 {
 	Node *stk;
 	OpCode *ip;
 
 	io::printf("operators\n");
-	for (ip = &atorstack; ip < atorp; ip++)
+	for (ip = &rc.atorstack; ip < rc.atorp; ip++)
 	{
 		io::printf("0%o\n", *ip);
 	}
 	io::printf("operands\n");
-	for (stk = &andstack; stk < andp; stk++)
+	for (stk = &rc.andstack; stk < rc.andp; stk++)
 	{
 		io::printf("0%o\t0%o\n", stk.first.type, stk.last.type);
 	}
@@ -495,15 +499,13 @@ fn void dump(Reprog *pp)
 	} while (l++.type);
 }
 
-fn Reclass* newclass()
+fn Reclass* newclass(Recomp *rc)
 {
-	// TODO: Find better solution than hard-codeing 16
-	// if (nclass >= nelem(((Reprog*)0).class))
-	if (nclass >= 16)
+	if (rc.nclass >= MAXCLASS)
 	{
-		rcerror("too many character classes; increase Reprog.class size");
+		rcerror(rc, "too many character classes; increase Reprog.class size");
 	}
-	return &(classp[nclass++]);
+	return &(rc.classp[rc.nclass++]);
 }
 
 // Mock Plan9's chartorune
@@ -519,38 +521,38 @@ fn usz chartorune(Rune* rp, char* s)
 	return 0;
 }
 
-fn int nextc(Rune *rp)
+fn int nextc(Recomp *rc, Rune *rp)
 {
-	if (lexdone)
+	if (rc.lexdone)
 	{
 		*rp = 0;
 		return 1;
 	}
-	exprp += chartorune(rp, exprp);
+	rc.exprp += chartorune(rp, rc.exprp);
 	if (*rp == '\\')
 	{
-		exprp += chartorune(rp, exprp);
+		rc.exprp += chartorune(rp, rc.exprp);
 		return 1;
 	}
 	if (*rp == 0)
 	{
-		lexdone = 1;
+		rc.lexdone = 1;
 	}
 	return 0;
 }
 
-fn OpCode lex(int literal, OpCode dot_type)
+fn OpCode lex(Recomp *rc, int literal, OpCode dot_type)
 {
 	int quoted;
 
-	quoted = nextc(&yyrune);
+	quoted = nextc(rc, &rc.yyrune);
 	if (literal || quoted)
 	{
-		if(yyrune == 0) return END;
+		if(rc.yyrune == 0) return END;
 		return RUNE;
 	}
 
-	switch(yyrune)
+	switch(rc.yyrune)
 	{
 	case 0:
 		return END;
@@ -573,7 +575,7 @@ fn OpCode lex(int literal, OpCode dot_type)
 	case '$':
 		return EOL;
 	case '[':
-		return bldcclass();
+		return bldcclass(rc);
 	}
 	return RUNE;
 }
@@ -586,7 +588,7 @@ macro usz nelem(list)
 	return $sizeof(list) / $sizeof(list[0]);
 }
 
-fn OpCode bldcclass()
+fn OpCode bldcclass(Recomp *rc)
 {
 	OpCode type;
 	Rune[NCCRUNE] r;
@@ -596,16 +598,16 @@ fn OpCode bldcclass()
 
 	/* we have already seen the '[' */
 	type = CCLASS;
-	yyclassp = newclass();
+	rc.yyclassp = newclass(rc);
 
 	/* look ahead for negation */
 	/* SPECIAL CASE!!! negated classes don't match \n */
 	ep = &r[0];
-	quoted = nextc(&rune);
+	quoted = nextc(rc, &rune);
 	if (!quoted && rune == '^')
 	{
 		type = NCCLASS;
-		quoted = nextc(&rune);
+		quoted = nextc(rc, &rune);
 		*ep++ = '\n';
 		*ep++ = '\n';
 	}
@@ -615,7 +617,7 @@ fn OpCode bldcclass()
 	{
 		if (rune == 0)
 		{
-			rcerror("malformed '[]'");
+			rcerror(rc, "malformed '[]'");
 			return 0;
 		}
 		if (!quoted && rune == ']')
@@ -626,13 +628,13 @@ fn OpCode bldcclass()
 		{
 			if (ep == &r[0])
 			{
-				rcerror("malformed '[]'");
+				rcerror(rc, "malformed '[]'");
 				return 0;
 			}
-			quoted = nextc(&rune);
+			quoted = nextc(rc, &rune);
 			if ((!quoted && rune == ']') || rune == 0)
 			{
-				rcerror("malformed '[]'");
+				rcerror(rc, "malformed '[]'");
 				return 0;
 			}
 			*(ep-1) = rune;
@@ -642,11 +644,11 @@ fn OpCode bldcclass()
 			*ep++ = rune;
 			*ep++ = rune;
 		}
-		quoted = nextc(&rune);
+		quoted = nextc(rc, &rune);
 	}
 	if (ep >= &r[NCCRUNE-1])
 	{
-		rcerror("char class too large; increase Reclass.spans size");
+		rcerror(rc, "char class too large; increase Reclass.spans size");
 		return 0;
 	}
 
@@ -668,11 +670,11 @@ fn OpCode bldcclass()
 	}
 
 	/* merge spans */
-	np = &yyclassp.spans[0];
+	np = &rc.yyclassp.spans[0];
 	p = &r[0];
 	if (&r[0] == ep)
 	{
-		yyclassp.end = np;
+		rc.yyclassp.end = np;
 	}
 	else
 	{
@@ -695,7 +697,7 @@ fn OpCode bldcclass()
 				np[1] = p[1];
 			}
 		}
-		yyclassp.end = np+2;
+		rc.yyclassp.end = np+2;
 	}
 
 	return type;
@@ -705,6 +707,7 @@ fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
 {
 	OpCode token;
 	Reprog *pp;
+	Recomp rc;
 
 	/* get memory for the program */
 	pp = mem::malloc(Reprog.sizeof + 6 * Reinst.sizeof * s.len);
@@ -713,70 +716,70 @@ fn Reprog*? regcomp1(String s, int literal, OpCode dot_type)
 	}
 	defer catch mem::free(pp);
 
-	freep = &pp.firstinst[0];
-	classp = &pp.class[0];
-	errors = 0;
+	rc.freep = &pp.firstinst[0];
+	rc.classp = &pp.class[0];
+	rc.errors = 0;
 
 	// TODO: what to do with that?
 	// if(setjmp(regkaboom))
 	// 	goto out;
 
 	/* compile it */
-	lexdone = 0;
-	exprp = s.ptr;
-	nclass = 0;
-	nbra = 0;
-	atorp = &atorstack[0];
-	andp = &andstack[0];
-	subidp = &subidstack[0];
-	lastwasand = false;
-	cursubid = 0;
+	rc.lexdone = 0;
+	rc.exprp = s.ptr;
+	rc.nclass = 0;
+	rc.nbra = 0;
+	rc.atorp = &rc.atorstack[0];
+	rc.andp = &rc.andstack[0];
+	rc.subidp = &rc.subidstack[0];
+	rc.lastwasand = false;
+	rc.cursubid = 0;
 
 	/* Start with a low priority operator to prime parser */
-	pushator(OpCode.START-1);
-	while((token = lex(literal, dot_type)) != END)
+	pushator(&rc, OpCode.START-1);
+	while((token = lex(&rc, literal, dot_type)) != END)
 	{
 		if (((int)token&0300) == (int)OpCode.OPERATOR)
 		{
-			operator(token);
+			operator(&rc, token);
 		}
 		else
 		{
-			operand(token);
+			operand(&rc, token);
 		}
 	}
 
 	/* Close with a low priority operator */
-	evaluntil(START);
+	evaluntil(&rc, START);
 
 	/* Force END */
-	operand(END);
-	evaluntil(START);
+	operand(&rc, END);
+	evaluntil(&rc, START);
 
 	// TODO: only for debug
-	dumpstack();
+	dumpstack(&rc);
 
-	if(nbra)
+	if(rc.nbra)
 	{
 		return REG_UNMATCHED_LEFT_PAREN?;
 	}
-	--andp;	/* points to first and only operand */
-	pp.startinst = andp.first;
+	--rc.andp;	/* points to first and only operand */
+	pp.startinst = rc.andp.first;
 
 	// TODO: only for debug
 	dump(pp);
 
-	pp = optimize(pp);
+	pp = optimize(&rc, pp);
 
 	// TODO: only for debug
-	io::printf("start: %d\n", andp.first - &pp.firstinst[0]);
+	io::printf("start: %d\n", rc.andp.first - &pp.firstinst[0]);
 	dump(pp);
 
 	return pp;
 }
 
 //
-// API
+// Public API
 //
 
 fn Reprog*? regcomp(String s)
@@ -793,4 +796,5 @@ fn Reprog*? regcompnl(String s)
 {
 	return regcomp1(s, 0, ANYNL);
 }
+
 
