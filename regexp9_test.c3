@@ -77,3 +77,27 @@ fn void regexp9_test_submatches()
 		assert(match == want[i], "got: %s, want: %s", match, want[i]);
 	}
 }
+
+fn void regexp9_test_restarts()
+{
+	usz len, want;
+	String match;
+	int ret;
+	Resub rs;
+
+	Reprog *reprog = regexp9::regcomp("ab")!!;
+	defer mem::free(reprog);
+
+	want = 0;
+	ZString str = "abababab";
+	while ((ret = regexp9::regexec(reprog, str, &rs, 1)) && ret){
+		assert(ret >= 0);
+		len = rs.e.ep - rs.s.sp;
+		match = (String)rs.s.sp[:len];
+		assert(match == "ab");
+		want++;
+		rs.s.sp = rs.e.ep;
+		rs.e.ep = null;
+	}
+	assert(want == 4);
+}
