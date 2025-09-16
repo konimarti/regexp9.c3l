@@ -13,6 +13,7 @@ classic Plan 9 implementation by Rob Pike.
 * Alternation `|`, concatenation, quantifiers `* + ?`, grouping `(...)`
 * Character classes `[abc]`, ranges `[a-z]`, and negation `[^...]`
 * Anchors `^` and `$`, dot `.`
+* UTF‑8 aware: operates on Unicode code points (runes)
 * Leftmost‑longest match semantics (egrep‑style)
 * Small, dependency‑light C3 library (`.c3l`)
 
