@@ -56,3 +56,24 @@ fn void regexp9_test()
 	}
 	// assert(false);
 }
+
+fn void regexp9_test_submatches()
+{
+	usz len;
+	String match;
+	Resub[4] rs;
+
+	mem::set(rs[..], 0, $sizeof(rs));
+
+	Reprog *reprog = regexp9::regcomp("([0-9]+)-([0-9]+)-([0-9]+)")!!;
+	defer mem::free(reprog);
+	assert(regexp9::regexec(reprog, "650-253-0001", rs[..], 4) >= 0);
+
+	String[4] want = {"650-253-0001", "650", "253", "0001"};
+	for (usz i = 0; i < 4; i++)
+	{
+		len = rs[i].e.ep - rs[i].s.sp;
+		match = (String)rs[i].s.sp[:len];
+		assert(match == want[i], "got: %s, want: %s", match, want[i]);
+	}
+}
