@@ -79,7 +79,7 @@ fn void main() {
 
     // Execute with captures (up to 10 capture pairs)
     Resub[10] subs;
-    if (regexp9::match(prog, "aabbb", subs[..], 10)!!) {
+    if (regexp9::match(prog, "aabbb", subs[..])!!) {
         // subs[0] = whole match, subs[1] = group 1, etc.
         // Each Resub can return its match with subs[i].match().
     }
