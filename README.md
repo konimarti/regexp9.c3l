@@ -75,16 +75,13 @@ import regexp9;
 fn void main() {
 
     // Compiled program
-    Reprog *prog = regexp9::regcomp("(ab|a)b+");   
-    if (!prog) {
-        panic("bad pattern");
-    }
+    Reprog *prog = regexp9::compile("(ab|a)b+")!!;   
 
     // Execute with captures (up to 10 capture pairs)
     Resub[10] subs;
-    if (regexp9::regexec(prog, "aabbb", subs[..], 10)) {
+    if (regexp9::match(prog, "aabbb", subs[..], 10)!!) {
         // subs[0] = whole match, subs[1] = group 1, etc.
-        // Each Resub has .s.sp (start) and .e.ep (end) indices into the input
+        // Each Resub can return its match with subs[i].match().
     }
 }
 ```
@@ -93,25 +90,32 @@ String replacement (if you need it):
 
 ```c
 // Given a successful regexec, produce a substituted string using \1, \2, ...
-char[100] output;
-regexp9.regsub("X-\\1-Y", "aabbb", &subs);
+String s = regexp9::substitute(mem, "X-\\1-Y", subs[..]);
+defer s.free(mem);
 ```
 
-> Type/func names above mirror the Plan 9 API. See `regexp9.c3` and
+> Type/func names mirror the Plan 9 API. See `regexp9.c3` and
 > `regexp9_test.c3` for the exact signatures in this port.
 
 ---
 
 ### API overview
 
-* `Reprog* regcomp(ZString pattern)` — Compile pattern into a program
+C3 API:
+* `Reprog*? compile(Allocator allocator, ZString pattern)` — Compile pattern into a program
+* `Reprog*? tcompile(ZString pattern)` — Compile pattern into a program that is allocated on tmem
+* `bool? match(Reprog* prog, ZString text, Resub[] subs = {})` — Run program on text; fill `subs` with capture ranges
+* `String substitute(String src, Resub[] subs)` — Expand `\1`, `\2`, … with captures
+
+Plan9 API:
+* `Reprog*? regcomp(ZString s)` — Compile pattern into a program
 * `int regexec(Reprog* prog, char* text, Resub* subs, int slen)` — Run program on text; fill `subs` with capture ranges
-* `void regsub(char* src, char* dst, int dlen, Resub* subs, int slen)` — expand `\1`, `\2`, … using captures
+* `void regsub(char* src, char* dst, int dlen, Resub* subs, int slen)` — Expand `\1`, `\2`, … using captures
 
 * Types:
 
   * `Reprog` — compiled Thompson NFA program
-  * `Resub` — capture pair `{int start; int end;}`
+  * `Resub` — capture groups
 
 ---
 
