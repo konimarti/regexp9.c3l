@@ -59,7 +59,6 @@ fn void regexp9_test()
 
 fn void regexp9_test_submatches()
 {
-	usz len;
 	String match;
 	Resub[4] rs;
 
@@ -72,29 +71,24 @@ fn void regexp9_test_submatches()
 	String[4] want = {"650-253-0001", "650", "253", "0001"};
 	for (usz i = 0; i < 4; i++)
 	{
-		len = rs[i].e.ep - rs[i].s.sp;
-		match = (String)rs[i].s.sp[:len];
+		match = rs[i].match();
 		assert(match == want[i], "got: %s, want: %s", match, want[i]);
 	}
 }
 
 fn void regexp9_test_restarts()
 {
-	usz len, want;
-	String match;
-	int ret;
+	usz want;
 	Resub rs;
 
-	Reprog *reprog = regexp9::regcomp("ab")!!;
+	Reprog *reprog = regexp9::compile(mem, "ab")!!;
 	defer mem::free(reprog);
 
 	want = 0;
 	ZString str = "abababab";
-	while ((ret = regexp9::regexec(reprog, str, &rs, 1)) && ret){
-		assert(ret >= 0);
-		len = rs.e.ep - rs.s.sp;
-		match = (String)rs.s.sp[:len];
-		assert(match == "ab");
+	while (regexp9::match(reprog, str, &rs, 1)!!)
+	{
+		assert(rs.match() == "ab");
 		want++;
 		rs.s.sp = rs.e.ep;
 		rs.e.ep = null;

@@ -7,7 +7,45 @@ alias Rune = Char32;
 const Rune RUNESELF = 0x80;
 const Rune RUNESYNC = 0x80;
 
-faultdef REG_OUT_OF_MEMORY, REG_UNMATCHED_LEFT_PAREN;
+faultdef REG_OUT_OF_MEMORY, REG_UNMATCHED_LEFT_PAREN, REG_EXEC_ERROR;
+
+//
+// C3 API to compile a pattern
+//
+
+fn Reprog*? compile(Allocator allocator, ZString s) => regcomp1(allocator, s, false, ANY);
+fn Reprog*? tcompile(ZString s) => compile(tmem, s);
+
+fn bool? match(Reprog *progp, ZString str, Resub *mp = null, int ms = 0)
+{
+	int ret;
+	ret = regexec(progp, str, mp, ms);
+	switch
+	{
+		case ret > 0: return true;
+		case ret == 0: return false;
+		default: return REG_EXEC_ERROR?;
+	}
+}
+
+//
+// Plan9 API
+//
+
+fn Reprog*? regcomp(ZString s)
+{
+	return regcomp1(mem, s, false, ANY);
+}
+
+fn Reprog*? regcomplit(ZString s)
+{
+	return regcomp1(mem, s, true, ANY);
+}
+
+fn Reprog*? regcompnl(ZString s)
+{
+	return regcomp1(mem, s, false, ANYNL);
+}
 
 //
 // regexp9.h
@@ -28,6 +66,15 @@ struct Resub
 		char *ep;
 		Rune *rep;
 	}
+}
+
+fn String Resub.match(&self)
+{
+	isz len;
+	if (self.e.ep == null || self.s.sp == null) return "";
+	len = self.e.ep - self.s.sp;
+	if (len < 0) return "";
+	return (String)self.s.sp[:len];
 }
 
  const usz NCCRUNE = 64;
@@ -70,7 +117,6 @@ struct Reprog
 	Reclass[MAXCLASS] class;	/* .data */
 	Reinst[5]         firstinst;	/* .text */
 }
-
 
 //
 // regcomp.h
@@ -155,7 +201,6 @@ struct	Reljunk
 //
 // regcomp.c
 //
-// module regexp9::comp;
 
 <*
  Parser Information
@@ -165,10 +210,6 @@ struct Node
 	Reinst* first;
 	Reinst* last;
 }
-
-<* max rune ranges per character class is nelem(classp->spans)/2 *>
-// TODO
-// #define NCCRUNE	nelem(classp->spans)
 
 const usz NSTACK = 20;
 
@@ -193,9 +234,10 @@ struct Recomp
 	Reclass*       yyclassp;	/* last lex'd class */
 }
 
-fn void rcerror(Recomp *rc, char *s)
+fn void rcerror(Recomp *rc, String s)
 {
 	rc.errors++;
+	io::eprintfn("regexp9 error: %s", s);
 	// FIXME: Improve error handling
 	// regerror(s);
 	// longjmp(regkaboom, 1);
@@ -533,7 +575,7 @@ fn int nextc(Recomp *rc, Rune *rp)
 	return 0;
 }
 
-fn OpCode lex(Recomp *rc, int literal, OpCode dot_type)
+fn OpCode lex(Recomp *rc, bool literal, OpCode dot_type)
 {
 	int quoted;
 
@@ -695,18 +737,18 @@ fn OpCode bldcclass(Recomp *rc)
 	return type;
 }
 
-fn Reprog*? regcomp1(ZString s, int literal, OpCode dot_type)
+fn Reprog*? regcomp1(Allocator allocator, ZString s, bool literal, OpCode dot_type)
 {
 	OpCode token;
 	Reprog *pp;
 	Recomp rc;
 
 	/* get memory for the program */
-	pp = mem::malloc(Reprog.sizeof + 6 * Reinst.sizeof * s.len());
+	pp = allocator::malloc(allocator, Reprog.sizeof + 6 * Reinst.sizeof * s.len());
 	if (pp == null){
 		return REG_OUT_OF_MEMORY?;
 	}
-	defer catch mem::free(pp);
+	defer catch allocator::free(allocator, pp);
 
 	rc.freep = &pp.firstinst[0];
 	rc.classp = &pp.class[0];
@@ -771,25 +813,6 @@ fn Reprog*? regcomp1(ZString s, int literal, OpCode dot_type)
 	$endif
 
 	return pp;
-}
-
-//
-// Public API
-//
-
-fn Reprog*? regcomp(ZString s)
-{
-	return regcomp1(s, 0, ANY);
-}
-
-fn Reprog*? regcomplit(ZString s)
-{
-	return regcomp1(s, 1, ANY);
-}
-
-fn Reprog*? regcompnl(ZString s)
-{
-	return regcomp1(s, 0, ANYNL);
 }
 
 //
