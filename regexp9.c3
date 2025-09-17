@@ -10,16 +10,30 @@ const Rune RUNESYNC = 0x80;
 faultdef REG_OUT_OF_MEMORY, REG_UNMATCHED_LEFT_PAREN, REG_EXEC_ERROR;
 
 //
-// C3 API to compile a pattern
+// C3 API
 //
 
-fn Reprog*? compile(Allocator allocator, ZString s) => regcomp1(allocator, s, false, ANY);
-fn Reprog*? tcompile(ZString s) => compile(tmem, s);
+<*
+ Compile the pattern in the zero-terminated string s into a program.
 
-fn bool? match(Reprog *progp, ZString str, Resub *mp = null, int ms = 0)
+ The memory for Reprog is allocated on the provided allocator and needs to be
+ freed by the caller.
+*>
+fn Reprog*? compile(Allocator allocator, ZString s) @inline => regcomp1(allocator, s, false, ANY);
+fn Reprog*? tcompile(ZString s) @inline => compile(tmem, s);
+
+<*
+ Execute the compiled regular expression in progp against the zero-terminated
+ string str.
+
+ Capture groups (Resub[]) store a reference to str if provided.
+
+ Returns true when matched.
+*>
+fn bool? match(Reprog *progp, ZString str, Resub[] subs = {})
 {
 	int ret;
-	ret = regexec(progp, str, mp, ms);
+	ret = regexec(progp, str, subs.ptr, subs.len);
 	switch
 	{
 		case ret > 0: return true;
@@ -77,7 +91,20 @@ fn String Resub.match(&self)
 	return (String)self.s.sp[:len];
 }
 
- const usz NCCRUNE = 64;
+const usz NCCRUNE = 64;
+const usz MAXCLASS = 16;
+
+<*
+ Reprogram definition
+*>
+struct Reprog
+{
+	Reinst           *startinst;	/* start pc */
+	Reclass[MAXCLASS] class;	/* .data */
+	Reinst[5]         firstinst;	/* .text */
+}
+
+
 <*
  character class, each pair of rune's defines a range
 *>
@@ -105,17 +132,6 @@ struct Reinst
 		Reinst *left;		/* left child of OR */
 		Reinst *next;		/* next instruction for CAT & LBRA */
 	}
-}
-
-const usz MAXCLASS = 16;
-<*
- Reprogram definition
-*>
-struct Reprog
-{
-	Reinst           *startinst;	/* start pc */
-	Reclass[MAXCLASS] class;	/* .data */
-	Reinst[5]         firstinst;	/* .text */
 }
 
 //
@@ -1258,8 +1274,10 @@ fn void regsub(
 	int i;
 
 	ep = dp + dlen - 1;
-	while (*sp != '\0'){
-		if (*sp == '\\'){
+	while (*sp != '\0')
+	{
+		if (*sp == '\\')
+		{
 			switch(*++sp)
 			{
 			case '0':
@@ -1321,6 +1339,53 @@ fn void regsub(
 	}
 	*dp = '\0';
 }
+
+<*
+ Substitute into one string using the matches from the last regexec(). Returned
+ string is allocated on the provided allocator.
+*>
+fn String substitute(
+	Allocator allocator,
+	String s,	/* source string */
+	Resub[] mp,	/* subexpression elements */
+) => @pool()
+{
+	char pos;
+	DString buf = dstring::temp();
+	for (usz i = 0; i < s.len; i++)
+	{
+		if (s[i] == '\\' && i + 1 < s.len)
+		{
+			i++; // Consume \
+			switch(s[i])
+			{
+			case '0': case '1': case '2': case '3': case '4':
+			case '5': case '6': case '7': case '8': case '9':
+				pos = s[i] - '0';
+				if (pos < mp.len)
+				{
+					buf.append_chars(mp[pos].match());
+				}
+				else
+				{
+					nextcase;
+				}
+			default:
+				buf.append_char(s[i]);
+			}
+		}
+		else if (s[i] == '&' && mp.len)
+		{
+			buf.append_chars(mp[0].match());
+		}
+		else
+		{
+			buf.append_char(s[i]);
+		}
+	}
+	return buf.copy_str(allocator);
+}
+fn String tsubstiute(String s, Resub[] mp) => substitute(tmem, s, mp);
 
 
 <*

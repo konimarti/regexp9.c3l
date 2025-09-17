@@ -65,7 +65,7 @@ fn void regexp9_test_submatches()
 	mem::set(rs[..], 0, $sizeof(rs));
 
 	Reprog *reprog = regexp9::regcomp("([0-9]+)-([0-9]+)-([0-9]+)")!!;
-	defer mem::free(reprog);
+	defer allocator::free(mem, reprog);
 	assert(regexp9::regexec(reprog, "650-253-0001", rs[..], 4) >= 0);
 
 	String[4] want = {"650-253-0001", "650", "253", "0001"};
@@ -74,6 +74,22 @@ fn void regexp9_test_submatches()
 		match = rs[i].match();
 		assert(match == want[i], "got: %s, want: %s", match, want[i]);
 	}
+}
+
+fn void regexp9_test_substitute()
+{
+	ZString str = "650-253-0001";
+	String src = "(\\2) \\1 0001";
+	String want = "(253) 650 0001";
+	Resub[4] rs;
+	Reprog *reprog = regexp9::compile(mem, "([0-9]+)-([0-9]+)-([0-9]+)")!!;
+	defer allocator::free(mem, reprog);
+	assert(regexp9::match(reprog, str, rs[..])!!);
+
+	String got = regexp9::substitute(mem, src, rs[..]);
+	defer got.free(mem);
+
+	assert(got == want, "got: %s, want: %s", got, want);
 }
 
 fn void regexp9_test_restarts()
@@ -86,7 +102,7 @@ fn void regexp9_test_restarts()
 
 	want = 0;
 	ZString str = "abababab";
-	while (regexp9::match(reprog, str, &rs, 1)!!)
+	while (regexp9::match(reprog, str, (&rs)[:1])!!)
 	{
 		assert(rs.match() == "ab");
 		want++;
