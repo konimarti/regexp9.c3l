@@ -157,7 +157,6 @@ c3c test
 ### Roadmap / ideas
 
 * Pre‑filter for literal prefixes to skip obvious non‑matches
-* Improve error handling
 * Rewrite parts into more idiomatic C3
 * Additional character‑class helpers (`\d`, `\s`, `\w`) as short‑hands
 

@@ -7,7 +7,10 @@ alias Rune = Char32;
 const Rune RUNESELF = 0x80;
 const Rune RUNESYNC = 0x80;
 
-faultdef REG_OUT_OF_MEMORY, REG_UNMATCHED_LEFT_PAREN, REG_EXEC_ERROR;
+faultdef REG_OUT_OF_MEMORY,
+	REG_UNMATCHED_LEFT_PAREN,
+	REG_EXEC_ERROR,
+	REG_GENERAL_ERROR;
 
 //
 // C3 API
@@ -264,13 +267,13 @@ struct Recomp
 	Allocator      allocator;
 }
 
-fn void rcerror(Recomp *rc, String s)
+fn void? rcerror(Recomp *rc, String s, fault err = REG_GENERAL_ERROR)
 {
 	rc.errors++;
+	$if $feature(DEBUG):
 	io::eprintfn("regexp9 error: %s", s);
-	// FIXME: Improve error handling
-	// regerror(s);
-	// longjmp(regkaboom, 1);
+	$endif
+	return err?;
 }
 
 fn Reinst* newinst(Recomp *rc, OpCode t)
@@ -281,13 +284,13 @@ fn Reinst* newinst(Recomp *rc, OpCode t)
 	return rc.freep++;
 }
 
-fn void operand(Recomp *rc, OpCode t)
+fn void? operand(Recomp *rc, OpCode t)
 {
 	Reinst *i;
 
 	if (rc.lastwasand)
 	{
-		operator(rc, CAT);	/* catenate is implicit */
+		operator(rc, CAT)!;	/* catenate is implicit */
 	}
 	i = newinst(rc, t);
 
@@ -300,34 +303,34 @@ fn void operand(Recomp *rc, OpCode t)
 		i.u1.r = rc.yyrune;
 	}
 
-	pushand(rc, i, i);
+	pushand(rc, i, i)!;
 	rc.lastwasand = true;
 }
 
-fn void operator(Recomp *rc, OpCode t)
+fn void? operator(Recomp *rc, OpCode t)
 {
 	if (t == RBRA && --rc.nbra<0)
 	{
-		rcerror(rc, "unmatched right paren");
+		rcerror(rc, "unmatched right paren")!;
 	}
 	if (t == LBRA){
 		if (++rc.cursubid >= NSUBEXP)
 		{
-			rcerror (rc, "too many subexpressions");
+			rcerror(rc, "too many subexpressions")!;
 		}
 		rc.nbra++;
 		if (rc.lastwasand)
 		{
-			operator(rc, CAT);
+			operator(rc, CAT)!;
 		}
 	}
 	else
 	{
-		evaluntil(rc, t);
+		evaluntil(rc, t)!;
 	}
 	if (t != RBRA)
 	{
-		pushator(rc, t);
+		pushator(rc, t)!;
 	}
 	rc.lastwasand = false;
 	if (t == STAR || t == QUEST || t == PLUS || t == RBRA)
@@ -336,129 +339,109 @@ fn void operator(Recomp *rc, OpCode t)
 	}
 }
 
-fn void regerr2(char *s, int c)
-{
-	// FIXME
-	// char[100] buf;
-	// char *cp = buf;
-	// while(*s)
-	// {
-	// 	*cp++ = *s++;
-	// }
-	// *cp++ = c;
-	// *cp = '\0';
-	// rcerror(buf);
-}
-
-fn void cant(char *s)
-{
-	// FIXME
-	// char[100] buf;
-	// strcpy(buf, "can't happen: ");
-	// strcat(buf, s);
-	// rcerror(buf);
-}
-
-fn void pushand(Recomp *rc, Reinst *f, Reinst *l)
+fn void? pushand(Recomp *rc, Reinst *f, Reinst *l)
 {
 	if(rc.andp > &rc.andstack[NSTACK-1])
 	{
-		cant("operand stack overflow");
+		rcerror(rc, "operand stack overflow")!;
 	}
 	rc.andp.first = f;
 	rc.andp.last = l;
 	rc.andp++;
 }
 
-fn void pushator(Recomp *rc, OpCode t)
+fn void? pushator(Recomp *rc, OpCode t)
 {
 	if(rc.atorp > &rc.atorstack[NSTACK-1])
 	{
-		cant("operator stack overflow");
+		rcerror(rc, "operator stack overflow")!;
 	}
 	*(rc.atorp++) = t;
 	*(rc.subidp++) = rc.cursubid;
 }
 
-fn Node* popand(Recomp *rc, int op)
+fn Node*? popand(Recomp *rc, int op)
 {
 	Reinst *inst;
 
 	if(rc.andp <= &rc.andstack[0])
 	{
-		regerr2("missing operand for ", op);
+		@pool()
+		{
+		rcerror(rc, string::tformat("missing operand for %o", op))!;
+		};
 		inst = newinst(rc, NOP);
-		pushand(rc, inst, inst);
+		pushand(rc, inst, inst)!;
 	}
 	return --rc.andp;
 }
 
-fn OpCode popator(Recomp *rc)
+fn OpCode? popator(Recomp *rc)
 {
 	if(rc.atorp <= &rc.atorstack[0])
 	{
-		cant("operator stack underflow");
+		rcerror(rc, "operator stack underflow")!;
 	}
 	--rc.subidp;
 	return *--rc.atorp;
 }
 
-fn void evaluntil(Recomp *rc, OpCode pri)
+fn void? evaluntil(Recomp *rc, OpCode pri)
 {
 	Node *op1; Node *op2;
 	Reinst *inst1; Reinst *inst2;
 
 	while (pri == RBRA || rc.atorp[-1] >= pri)
 	{
-		switch(popator(rc))
+		switch(popator(rc)!)
 		{
 		default:
-			rcerror(rc, "unknown operator in evaluntil");
+			rcerror(rc, "unknown operator in evaluntil")!;
 		case LBRA:		/* must have been RBRA */
-			op1 = popand(rc, '(');
+			op1 = popand(rc, '(')!;
 			inst2 = newinst(rc, RBRA);
 			inst2.u1.subid = *rc.subidp;
 			op1.last.u2.next = inst2;
 			inst1 = newinst(rc, LBRA);
 			inst1.u1.subid = *rc.subidp;
 			inst1.u2.next = op1.first;
-			pushand(rc, inst1, inst2);
+			pushand(rc, inst1, inst2)!;
 			return;
 		case OR:
-			op2 = popand(rc, '|');
-			op1 = popand(rc, '|');
+			op2 = popand(rc, '|')!;
+			op1 = popand(rc, '|')!;
 			inst2 = newinst(rc, NOP);
 			op2.last.u2.next = inst2;
 			op1.last.u2.next = inst2;
 			inst1 = newinst(rc, OR);
 			inst1.u1.right = op1.first;
 			inst1.u2.left = op2.first;
-			pushand(rc, inst1, inst2);
+			pushand(rc, inst1, inst2)!;
 		case CAT:
-			op2 = popand(rc, 0);
-			op1 = popand(rc, 0);
+			op2 = popand(rc, 0)!;
+			op1 = popand(rc, 0)!;
 			op1.last.u2.next = op2.first;
-			pushand(rc, op1.first, op2.last);
+			pushand(rc, op1.first, op2.last)!;
 		case STAR:
-			op2 = popand(rc, '*');
+			op2 = popand(rc, '*')!;
 			inst1 = newinst(rc, OR);
 			op2.last.u2.next = inst1;
 			inst1.u1.right = op2.first;
-			pushand(rc, inst1, inst1);
+			pushand(rc, inst1, inst1)!;
 		case PLUS:
-			op2 = popand(rc, '+');
+			op2 = popand(rc, '+')!;
 			inst1 = newinst(rc, OR);
 			op2.last.u2.next = inst1;
 			inst1.u1.right = op2.first;
-			pushand(rc, op2.first, inst1);
+			pushand(rc, op2.first, inst1)!;
 		case QUEST:
-			op2 = popand(rc, '?');
+			op2 = popand(rc, '?')!;
 			inst1 = newinst(rc, OR);
 			inst2 = newinst(rc, NOP);
 			inst1.u2.left = inst2;
 			inst1.u1.right = op2.first;
 			op2.last.u2.next = inst2;
-			pushand(rc, inst1, inst2);
+			pushand(rc, inst1, inst2)!;
 		}
 	}
 }
@@ -576,11 +559,11 @@ fn void dump(Reprog *pp)
 	} while ((l++).type != END);
 }
 
-fn Reclass* newclass(Recomp *rc)
+fn Reclass*? newclass(Recomp *rc)
 {
 	if (rc.nclass >= MAXCLASS)
 	{
-		rcerror(rc, "too many character classes; increase Reprog.class size");
+		rcerror(rc, "too many character classes; increase Reprog.class size")!;
 	}
 	return &(rc.classp[rc.nclass++]);
 }
@@ -605,7 +588,7 @@ fn int nextc(Recomp *rc, Rune *rp)
 	return 0;
 }
 
-fn OpCode lex(Recomp *rc, bool literal, OpCode dot_type)
+fn OpCode? lex(Recomp *rc, bool literal, OpCode dot_type)
 {
 	int quoted;
 
@@ -639,7 +622,7 @@ fn OpCode lex(Recomp *rc, bool literal, OpCode dot_type)
 	case '$':
 		return EOL;
 	case '[':
-		return bldcclass(rc);
+		return bldcclass(rc)!;
 	}
 	return RUNE;
 }
@@ -652,7 +635,7 @@ macro usz nelem(list)
 	return $sizeof(list) / $sizeof(list[0]);
 }
 
-fn OpCode bldcclass(Recomp *rc)
+fn OpCode? bldcclass(Recomp *rc)
 {
 	OpCode type;
 	Rune[NCCRUNE] r;
@@ -662,7 +645,7 @@ fn OpCode bldcclass(Recomp *rc)
 
 	/* we have already seen the '[' */
 	type = CCLASS;
-	rc.yyclassp = newclass(rc);
+	rc.yyclassp = newclass(rc)!;
 
 	/* look ahead for negation */
 	/* SPECIAL CASE!!! negated classes don't match \n */
@@ -681,8 +664,7 @@ fn OpCode bldcclass(Recomp *rc)
 	{
 		if (rune == 0)
 		{
-			rcerror(rc, "malformed '[]'");
-			return 0;
+			rcerror(rc, "malformed '[]'")!;
 		}
 		if (!quoted && rune == ']')
 		{
@@ -692,14 +674,12 @@ fn OpCode bldcclass(Recomp *rc)
 		{
 			if (ep == &r[0])
 			{
-				rcerror(rc, "malformed '[]'");
-				return 0;
+				rcerror(rc, "malformed '[]'")!;
 			}
 			quoted = nextc(rc, &rune);
 			if ((!quoted && rune == ']') || rune == 0)
 			{
-				rcerror(rc, "malformed '[]'");
-				return 0;
+				rcerror(rc, "malformed '[]'")!;
 			}
 			*(ep-1) = rune;
 		}
@@ -712,8 +692,7 @@ fn OpCode bldcclass(Recomp *rc)
 	}
 	if (ep >= &r[NCCRUNE-1])
 	{
-		rcerror(rc, "char class too large; increase Reclass.spans size");
-		return 0;
+		rcerror(rc, "char class too large; increase Reclass.spans size")!;
 	}
 
 	/* sort on span start */
@@ -801,25 +780,25 @@ fn Reprog*? regcomp1(Allocator allocator, ZString s, bool literal, OpCode dot_ty
 	rc.cursubid = 0;
 
 	/* Start with a low priority operator to prime parser */
-	pushator(&rc, OpCode.START - 1);
-	while((token = lex(&rc, literal, dot_type)) != END)
+	pushator(&rc, OpCode.START - 1)!;
+	while((token = lex(&rc, literal, dot_type)!) != END)
 	{
 		if ((((char)token)&0o300) == (char)OpCode.OPERATOR)
 		{
-			operator(&rc, token);
+			operator(&rc, token)!;
 		}
 		else
 		{
-			operand(&rc, token);
+			operand(&rc, token)!;
 		}
 	}
 
 	/* Close with a low priority operator */
-	evaluntil(&rc, START);
+	evaluntil(&rc, START)!;
 
 	/* Force END */
-	operand(&rc, END);
-	evaluntil(&rc, START);
+	operand(&rc, END)!;
+	evaluntil(&rc, START)!;
 
 	$if $feature(DEBUG):
 	dumpstack(&rc);
