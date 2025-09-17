@@ -23,11 +23,8 @@ fn Reprog*? compile(Allocator allocator, ZString s) @inline => regcomp1(allocato
 fn Reprog*? tcompile(ZString s) @inline => compile(tmem, s);
 
 <*
- Execute the compiled regular expression in progp against the zero-terminated
- string str.
-
- Capture groups (Resub[]) store a reference to str if provided.
-
+ Run the compiled regular expression against the zero-terminated string str.
+ Capture groups (Resub[]) store a reference to string str.
  Returns true when matched.
 *>
 fn bool? match(Reprog *progp, ZString str, Resub[] subs = {})
@@ -40,6 +37,22 @@ fn bool? match(Reprog *progp, ZString str, Resub[] subs = {})
 		case ret == 0: return false;
 		default: return REG_EXEC_ERROR?;
 	}
+}
+
+<*
+ Returns true if string s matches zero-terminated regular-expression pattern.
+*>
+fn bool? match_string(ZString pattern, String s) => @pool()
+{
+	if (try prog = tcompile(pattern))
+	{
+		Resub rs;
+		if (try ok = match(prog, s.zstr_tcopy(), (&rs)[:1]) && ok)
+		{
+			return rs.match() == s;
+		}
+	}
+	return false;
 }
 
 //
@@ -248,6 +261,7 @@ struct Recomp
 	int            errors;
 	Rune           yyrune;		/* last lex'd rune */
 	Reclass*       yyclassp;	/* last lex'd class */
+	Allocator      allocator;
 }
 
 fn void rcerror(Recomp *rc, String s)
@@ -476,7 +490,7 @@ fn Reprog* optimize(Recomp *rc, Reprog *pp)
 	 *  and then relocate the code.
 	 */
 	size = (int)Reprog.sizeof + (int)(rc.freep - &pp.firstinst[0]) * (int)Reinst.sizeof;
-	npp = mem::realloc(pp, size);
+	npp = allocator::realloc(rc.allocator, pp, size);
 	if(npp == null || npp == pp)
 	{
 		return pp;
@@ -766,6 +780,7 @@ fn Reprog*? regcomp1(Allocator allocator, ZString s, bool literal, OpCode dot_ty
 	}
 	defer catch allocator::free(allocator, pp);
 
+	rc.allocator = allocator;
 	rc.freep = &pp.firstinst[0];
 	rc.classp = &pp.class[0];
 	rc.errors = 0;

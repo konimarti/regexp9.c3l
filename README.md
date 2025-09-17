@@ -106,6 +106,7 @@ C3 API:
 * `Reprog*? tcompile(ZString pattern)` — Compile pattern into a program that is allocated on tmem
 * `bool? match(Reprog* prog, ZString text, Resub[] subs = {})` — Run program on text; fill `subs` with capture ranges
 * `String substitute(String src, Resub[] subs)` — Expand `\1`, `\2`, … with captures
+* `bool match_string(ZString pattern, String s)` — Returns true when s matches regular expression pattern
 
 Plan9 API:
 * `Reprog*? regcomp(ZString s)` — Compile pattern into a program

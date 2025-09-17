@@ -111,3 +111,12 @@ fn void regexp9_test_restarts()
 	}
 	assert(want == 4);
 }
+
+fn void regexp9_match_string()
+{
+	assert(regexp9::match_string("abc","abc")!!);
+	assert(regexp9::match_string("a.c","abc")!!);
+	assert(regexp9::match_string("a+", "aaa")!!);
+	assert(regexp9::match_string("aa*", "aaa")!!);
+	assert(regexp9::match_string("[ab]*","aaabbbaaba")!!);
+}
