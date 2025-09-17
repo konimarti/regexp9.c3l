@@ -166,10 +166,7 @@ PRs are welcome.
 
 ### Acknowledgments
 
-Plan 9 regexp by **Rob Pike**; background write‑ups by **Russ Cox** on Thompson
-NFAs and submatch tracking.
-
-[https://9fans.github.io/plan9port/unix/]
-[https://swtch.com/~rsc/regexp/regexp1.html]
-
+[Plan 9](https://9fans.github.io/plan9port/unix/) regexp by **Rob Pike**;
+background [write‑ups](https://swtch.com/~rsc/regexp/regexp1.html) by **Russ
+Cox** on Thompson NFAs and submatch tracking.
 
